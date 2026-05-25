@@ -1,4 +1,6 @@
 .aider*
+.agent_session_states.json
+AGENT_HANDOFF.md
 
 # Python
 __pycache__/
