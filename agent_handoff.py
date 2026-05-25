@@ -29,6 +29,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent
 STATE_FILE = PROJECT_ROOT / ".agent_session_states.json"
 HANDOFF_FILE = PROJECT_ROOT / "AGENT_HANDOFF.md"
+CLAUDE_MD = PROJECT_ROOT / "CLAUDE.md"
 
 TZ_OFFSET = "+08:00"  # 北京时间
 
@@ -84,6 +85,86 @@ def _build_handoff_chain(prev: dict[str, Any]) -> list[str]:
     if prev.get("session_id"):
         chain = [prev["session_id"]] + chain
     return chain[:8]
+
+
+def _inject_into_claude_md(state: dict[str, Any], handoff: str) -> None:
+    """
+    将交接上下文写入 CLAUDE.md 的 HANDOFF_CONTEXT 区域。
+    新会话启动时自动读取该区域，实现断点续传。
+    """
+    if not CLAUDE_MD.exists():
+        return
+
+    marker_start = "<!-- HANDOFF_CONTEXT_START -->"
+    marker_end = "<!-- HANDOFF_CONTEXT_END -->"
+
+    content = CLAUDE_MD.read_text(encoding="utf-8")
+
+    # 组装注入内容
+    injection = (
+        f"<!-- HANDOFF_CONTEXT_START -->\n"
+        f"> **上次会话断点**（{_tz_now()}）| 项目：{state.get('project', '?')} | "
+        f"阶段：{state.get('task', {}).get('current_phase', '?')}（{state.get('task', {}).get('progress_pct', 0)}%）| "
+        f"分支：{state.get('git_status', {}).get('branch', '?')}\n"
+        f"\n"
+        f"本段由 `agent_handoff.py load` 自动生成。新会话 AI 请读取以下上下文并继承工作。\n"
+        f"\n"
+        f"### 任务摘要\n"
+        f"{state.get('task', {}).get('summary', '无')}\n"
+        f"\n"
+        f"### 系统配置\n"
+        f"- SSD 路径：`{state.get('confirmed_config', {}).get('ssd_path', '?')}`\n"
+        f"- 活跃分支：`{state.get('git_status', {}).get('branch', '?')}`\n"
+    )
+
+    # Blockers
+    blockers = state.get("blockers", [])
+    open_bs = [b for b in blockers if b.get("status", "open") == "open"]
+    resolved_bs = [b for b in blockers if b.get("status") == "resolved"]
+    if open_bs:
+        injection += "### 🟡 待处理 Blockers\n"
+        for b in open_bs:
+            injection += f"- **{b['issue']}** → {b.get('workaround', '待解决')}\n"
+        injection += "\n"
+    if resolved_bs:
+        injection += "### ✅ 已解决\n"
+        for b in resolved_bs:
+            injection += f"- {b['issue']}\n"
+        injection += "\n"
+
+    # 近期 Git 提交
+    commits = state.get("git_status", {}).get("recent_commits", [])
+    if commits:
+        injection += "### 最近提交\n"
+        for c in commits[:3]:
+            injection += f"- {c}\n"
+        injection += "\n"
+
+    # 手递手链
+    chain = state.get("handoff_chain", [])
+    if chain:
+        injection += "### 手递手链\n"
+        for sid in chain[:5]:
+            injection += f"- `{sid[:8]}...`\n"
+        injection += "\n"
+
+    injection += (
+        f"AI 请根据以上上下文恢复工作状态。"
+        f"如需查看更多细节，可运行 `python3 agent_handoff.py status` 或阅读 `AGENT_HANDOFF.md`。\n"
+        f"<!-- HANDOFF_CONTEXT_END -->"
+    )
+
+    if marker_start in content and marker_end in content:
+        # 替换现有区域
+        pre = content.split(marker_start, 1)[0]
+        post = content.split(marker_end, 1)[1]
+        new_content = pre + injection + post
+    else:
+        # 追加到文件末尾
+        new_content = content.rstrip() + "\n\n" + injection + "\n"
+
+    CLAUDE_MD.write_text(new_content, encoding="utf-8")
+    print(f"  ✅ 上下文已注入 CLAUDE.md（新会话自动生效）")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -210,12 +291,15 @@ def save_checkpoint(message: str = "") -> None:
 
     HANDOFF_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    # 注入到 CLAUDE.md（新会话自动生效）
+    _inject_into_claude_md(state, "\n".join(lines))
+
     print(f"  ✅ 断点已保存：{STATE_FILE}")
     print(f"  ✅ 报告已生成：{HANDOFF_FILE}")
 
 
 def load_checkpoint() -> None:
-    """读取上次断点并打印注入指令，供当前 AI 读取。"""
+    """读取上次断点并注入 CLAUDE.md，新会话启动时自动继承上下文。"""
     if not STATE_FILE.exists():
         print("  ⚠️  未找到历史断点文件，无法恢复。", file=sys.stderr)
         sys.exit(1)
@@ -228,7 +312,7 @@ def load_checkpoint() -> None:
     handoff = HANDOFF_FILE.read_text(encoding="utf-8") if HANDOFF_FILE.exists() else ""
 
     print(f"\n{'='*60}")
-    print("  🔄 跨 Session 记忆恢复 — 断点续传")
+    print("  🔄 跨 Session 记忆恢复 — 注入 CLAUDE.md")
     print(f"{'='*60}")
     print(f"  项目：{state.get('project', '?')}")
     print(f"  阶段：{state.get('task', {}).get('current_phase', '?')}")
@@ -236,6 +320,9 @@ def load_checkpoint() -> None:
     print(f"  分支：{state.get('git_status', {}).get('branch', '?')}")
     print(f"  上次会话：{state.get('session_id', '?')[:8]}...")
     print(f"{'='*60}\n")
+
+    # 注入到 CLAUDE.md
+    _inject_into_claude_md(state, handoff)
 
     # 如果有待处理的 blockers，醒目提示
     blockers = state.get("blockers", [])
@@ -246,13 +333,8 @@ def load_checkpoint() -> None:
             print(f"     - {b['issue']}")
         print()
 
-    # 输出 AGENT_HANDOFF.md 内容供 AI 读取
-    if handoff:
-        print("  ── 以下是上次的完整交接报告（AI 请读取并继承上下文）──")
-        print(handoff)
-    else:
-        print("  （AGENT_HANDOFF.md 不存在，仅恢复结构化状态）\n")
-        print(json.dumps(state, ensure_ascii=False, indent=2))
+    print("  💡 新会话启动后，AI 将自动读取 CLAUDE.md 中的上一轮上下文。")
+    print("     也可运行 `cat AGENT_HANDOFF.md` 查看完整报告。\n")
 
 
 def show_status() -> None:

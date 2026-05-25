@@ -120,3 +120,26 @@ python3 agent_handoff.py load
 # 快速查看上次断点摘要
 python3 agent_handoff.py status
 ```
+
+<!-- HANDOFF_CONTEXT_START -->
+> **上次会话断点**（2026-05-26 00:31）| 项目：Downloads | 阶段：未指定（0%）| 分支：main
+
+本段由 `agent_handoff.py load` 自动生成。新会话 AI 请读取以下上下文并继承工作。
+
+### 任务摘要
+测试 save 自动注入 CLAUDE.md
+
+### 系统配置
+- SSD 路径：`/Volumes/T7/Downloads`
+- 活跃分支：`main`
+### 最近提交
+- e709017 feat: implement cross-session handoff mechanism with CLAUDE.md spec, agent_handoff.py, and session-handoff skill
+- 0a1234a feat: add auto_post.py Playwright script and marketing copy templates
+- e9b31f3 chore: add project scaffolding — .gitignore, requirements.txt, and unit tests
+
+### 手递手链
+- `b12d60a1...`
+- `e3c94cba...`
+
+AI 请根据以上上下文恢复工作状态。如需查看更多细节，可运行 `python3 agent_handoff.py status` 或阅读 `AGENT_HANDOFF.md`。
+<!-- HANDOFF_CONTEXT_END -->
